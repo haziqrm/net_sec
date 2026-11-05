@@ -1,0 +1,7 @@
+# Packages to add later:
+# pydantic
+# PyYAML
+# fastapi
+# uvicorn
+# websockets
+# scapy  (optional)
