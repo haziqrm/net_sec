@@ -20,6 +20,8 @@ class Session:
     Every field holds an immutable value. Commands never change a session; they
     return a new one built with ``dataclasses.replace``. ``step`` is pure;
     ``execute`` is the one place that adopts the new values, for the CLI loop.
+    ``last_events`` holds the events from the most recent command that caused any,
+    so ``explain`` still works after an ``arp -a`` in between.
     """
 
     network: Network
@@ -37,15 +39,16 @@ class Session:
         if not words:
             return self, []
 
-        base = replace(self, history=(*self.history, line), last_events=())
+        base = replace(self, history=(*self.history, line))
         name, args = words[0], words[1:]
         command = COMMANDS.get(name)
         if command is None:
             return base, [f"unknown command: {name}. Type help"]
         try:
             return command.run(base, args)
-        except UsageError:
-            return base, [f"usage: {command.usage}"]
+        except UsageError as exc:
+            reason = [str(exc)] if str(exc) else []
+            return base, [*reason, f"usage: {command.usage}"]
         except ValueError as exc:  # engine rejects bad input, e.g. an unknown host
             return base, [f"error: {exc}"]
 
