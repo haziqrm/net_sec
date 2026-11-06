@@ -1,15 +1,14 @@
-"""ARP Level 1 commands.
+"""ARP Level 1 commands: ip addr, arp-scan, arpspoof, wait, tcpdump, show-arp, explain.
 
-Real tools (ip, arp, arp-scan, arpspoof, tcpdump) print output in the style of
-their Linux counterparts. ``wait``, ``show-arp`` and ``explain`` exist only to
-teach; the last two are marked "[teaching view]".
+Output is plain and short. ``show-arp`` and ``explain`` show things a real
+attacker could not see, so they start with "[teaching view]".
 """
 
 from __future__ import annotations
 
-import ipaddress
+import re
 from dataclasses import replace
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Tuple
 
 from playground.engine.actions import ForgeArpReply
 from playground.engine.engine import apply
@@ -21,10 +20,9 @@ from playground.shell.registry import Command, CommandError, UsageError, registe
 if TYPE_CHECKING:
     from playground.shell.session import Session
 
-IFACE = "eth0"
-PREFIX_LEN = 24  # the simulated LAN is treated as a /24
 TEACHING = "[teaching view]"
 SIM = "[sim]"
+MAC_PATTERN = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 
 Output = Tuple["Session", List[str]]
 
@@ -36,111 +34,76 @@ def ip_key(ip: str) -> Tuple[int, ...]:
     return tuple(int(part) if part.isdigit() else 0 for part in ip.split("."))
 
 
-def arp_entries(host: Host) -> List[str]:
-    """``host``'s ARP table in ``arp -a`` format; locked entries are marked PERM."""
-    lines = []
-    for ip in sorted(host.arp_table, key=ip_key):
-        mac = host.arp_table[ip]
-        perm = " PERM" if host.static_entries.get(ip) == mac else ""
-        lines.append(f"? ({ip}) at {mac} [ether]{perm} on {IFACE}")
-    return lines
-
-
 def host_at(net: Network, ip: str) -> Host:
-    """The host that owns ``ip``, or a CommandError with a short, real-looking message."""
-    try:
-        ipaddress.IPv4Address(ip)
-    except ValueError:
-        raise CommandError(f"invalid address: {ip}") from None
+    """The host that owns ``ip``, or a CommandError."""
     host = net.host_by_ip(ip)
     if host is None:
         raise CommandError(f"no host with address {ip}")
     return host
 
 
+def parse_spoof_args(args: List[str]) -> Tuple[str, str, str]:
+    """Return (target_ip, mac, host_ip) from ``-t <ip> --mac <mac> <ip>``, in any order."""
+    options: Dict[str, str] = {}
+    positional: List[str] = []
+    words = iter(args)
+    for word in words:
+        if word in ("-t", "--mac"):
+            value = next(words, None)
+            if value is None or word in options:
+                raise UsageError
+            options[word] = value
+        else:
+            positional.append(word)
+    if set(options) != {"-t", "--mac"} or len(positional) != 1:
+        raise UsageError
+    return options["-t"], options["--mac"], positional[0]
+
+
 def yes_no(step: Step) -> str:
-    """A trace result as text: booleans read as yes / NO."""
+    """A trace result as text: booleans read as yes / no."""
     if isinstance(step.result, str):
         return step.result
-    return "yes" if step.result else "NO"
+    return "yes" if step.result else "no"
 
 
-# ----- real tools ----------------------------------------------------------
+# ----- commands ------------------------------------------------------------
 
 def run_ip(session: Session, args: List[str]) -> Output:
-    """``ip addr``: the attacker's interfaces."""
-    if args not in (["addr"], ["a"], ["address"], ["addr", "show"]):
+    """``ip addr``: your own IP and MAC."""
+    if args != ["addr"]:
         raise UsageError
     me = require_host(session.network, session.attacker)
-    iface = ipaddress.IPv4Interface(f"{me.ip}/{PREFIX_LEN}")
-    return session, [
-        "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000",
-        "    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
-        "    inet 127.0.0.1/8 scope host lo",
-        "       valid_lft forever preferred_lft forever",
-        f"2: {IFACE}: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP "
-        "group default qlen 1000",
-        f"    link/ether {me.mac} brd ff:ff:ff:ff:ff:ff",
-        f"    inet {iface.with_prefixlen} brd {iface.network.broadcast_address} scope global {IFACE}",
-        "       valid_lft forever preferred_lft forever",
-    ]
-
-
-def run_arp(session: Session, args: List[str]) -> Output:
-    """``arp -a``: the attacker's own ARP cache (empty output if there is nothing)."""
-    if args != ["-a"]:
-        raise UsageError
-    return session, arp_entries(require_host(session.network, session.attacker))
+    return session, [f"eth0  ip {me.ip}  mac {me.mac}"]
 
 
 def run_arp_scan(session: Session, args: List[str]) -> Output:
-    """``arp-scan -l``: every other host on the LAN. Read-only."""
-    if args not in (["-l"], ["--localnet"]):
+    """``arp-scan -l``: every other host on the local network. Changes nothing."""
+    if args != ["-l"]:
         raise UsageError
-    me = require_host(session.network, session.attacker)
     others = sorted(
-        (h for h in session.network.hosts.values() if h.name != me.name), key=lambda h: ip_key(h.ip)
+        (h for h in session.network.hosts.values() if h.name != session.attacker),
+        key=lambda h: ip_key(h.ip),
     )
-    size = ipaddress.IPv4Interface(f"{me.ip}/{PREFIX_LEN}").network.num_addresses
-    lines = [
-        f"Interface: {IFACE}, type: EN10MB, MAC: {me.mac}, IPv4: {me.ip}",
-        f"Starting arp-scan with {size} hosts",
-    ]
-    lines += [f"{h.ip}\t{h.mac}\t(Unknown)" for h in others]
-    lines += ["", f"Ending arp-scan: {size} hosts scanned. {len(others)} responded"]
-    return session, lines
+    return session, [f"{h.ip}  {h.mac}" for h in others] + [f"{len(others)} hosts found"]
 
 
 def run_arpspoof(session: Session, args: List[str]) -> Output:
-    """``arpspoof -t <target-ip> <host-ip>``: send one forged ARP reply to the target."""
-    if len(args) != 3 or args[0] != "-t":
-        raise UsageError
+    """``arpspoof -t <target-ip> --mac <mac> <host-ip>``: send one forged ARP reply."""
+    target_ip, mac, host_ip = parse_spoof_args(args)
     net = session.network
-    target, impersonated = host_at(net, args[1]), host_at(net, args[2])
-    me = require_host(net, session.attacker)
-    action = ForgeArpReply(sender=me.name, target=target.name, claimed_ip=impersonated.ip)
+    target, impersonated = host_at(net, target_ip), host_at(net, host_ip)
+    mac = mac.lower()
+    if not MAC_PATTERN.match(mac):
+        raise CommandError(f"invalid mac address {mac}")
+    action = ForgeArpReply(
+        sender=session.attacker, target=target.name, claimed_ip=impersonated.ip, claimed_mac=mac
+    )
     new_net, events = apply(net, action)
-    wire = f"{me.mac} {target.mac} 0806 42: arp reply {impersonated.ip} is-at {me.mac}"
     results = [f"{SIM} {e.text}" for e in events if e.kind != "sent"]
-    return replace(session, network=new_net, last_events=events), [wire, *results]
+    new = replace(session, network=new_net, last_events=events)
+    return new, [f"sent: {impersonated.ip} is at {mac}", *results]
 
-
-def run_tcpdump(session: Session, args: List[str]) -> Output:
-    """``tcpdump``: traffic the attacker received that was meant for someone else."""
-    if args not in ([], ["-i", IFACE]):
-        raise UsageError
-    net = session.network
-    mine = [c for c in net.captured if c.by == session.attacker]
-    if not mine:
-        return session, [f"listening on {IFACE}, no packets captured yet"]
-    lines = [f"listening on {IFACE}, link-type EN10MB (Ethernet), snapshot length 262144 bytes"]
-    for c in mine:
-        src = net.host(c.src)
-        lines.append(f"IP {src.ip if src else c.src} > {c.dest_ip}: {c.payload}")
-    return session, lines
-
-
-# ----- simulation and teaching views ---------------------------------------
 
 def run_wait(session: Session, args: List[str]) -> Output:
     """Let time pass: apply the next scheduled action, if any."""
@@ -154,6 +117,21 @@ def run_wait(session: Session, args: List[str]) -> Output:
     return new, [f"{SIM} {e.text}" for e in events]
 
 
+def run_tcpdump(session: Session, args: List[str]) -> Output:
+    """``tcpdump``: traffic you received that was meant for someone else."""
+    if args:
+        raise UsageError
+    net = session.network
+    mine = [c for c in net.captured if c.by == session.attacker]
+    if not mine:
+        return session, ["no packets captured"]
+    lines = []
+    for c in mine:
+        src = net.host(c.src)
+        lines.append(f"{src.ip if src else c.src} -> {c.dest_ip}: {c.payload}")
+    return session, lines
+
+
 def run_show_arp(session: Session, args: List[str]) -> Output:
     """Any host's ARP table. A real attacker could not see this."""
     if len(args) != 1:
@@ -161,8 +139,13 @@ def run_show_arp(session: Session, args: List[str]) -> Output:
     host = session.network.host(args[0])
     if host is None:
         raise CommandError(f"no host named {args[0]}")
-    lines = [f"{TEACHING} ARP table of {host.name} (a real attacker cannot see this):"]
-    lines += [f"  {line}" for line in arp_entries(host)] or ["  (empty)"]
+    lines = [TEACHING]
+    for ip in sorted(host.arp_table, key=ip_key):
+        mac = host.arp_table[ip]
+        locked = " (locked)" if host.static_entries.get(ip) == mac else ""
+        lines.append(f"{ip} -> {mac}{locked}")
+    if not host.arp_table:
+        lines.append("(empty)")
     return session, lines
 
 
@@ -171,28 +154,23 @@ def run_explain(session: Session, args: List[str]) -> Output:
     if args:
         raise UsageError
     if not session.last_events:
-        return session, [f"{TEACHING} nothing to explain yet: try arpspoof or wait first"]
+        return session, ["nothing to explain yet"]
     event = session.last_events[-1]
-    lines = [f"{TEACHING} Why: {event.text}"]
+    lines = [TEACHING, event.text]
     lines += [f"{i}. {step.check}: {yes_no(step)}" for i, step in enumerate(event.trace, start=1)]
     return session, lines
 
 
-register(Command("ip", "ip addr", "Show your network interfaces.", run_ip))
-register(Command("arp", "arp -a", "Show your ARP cache.", run_arp))
+register(Command("ip", "ip addr", "Show your IP and MAC address.", run_ip))
+register(Command("arp-scan", "arp-scan -l", "Find the other hosts on the network.", run_arp_scan))
 register(Command(
-    "arp-scan", "arp-scan -l", "Discover hosts on the local network.", run_arp_scan,
+    "arpspoof", "arpspoof -t <target-ip> --mac <mac> <host-ip>",
+    "Tell <target-ip> that <host-ip> is at <mac>.", run_arpspoof,
 ))
+register(Command("wait", "wait", "Let time pass (the victim logs in).", run_wait))
+register(Command("tcpdump", "tcpdump", "Show traffic you have intercepted.", run_tcpdump))
 register(Command(
-    "arpspoof", "arpspoof -t target host",
-    "Send one forged ARP reply telling target that host's IP is at your MAC.", run_arpspoof,
-))
-register(Command("tcpdump", "tcpdump [-i eth0]", "Show traffic you have received.", run_tcpdump))
-register(Command(
-    "wait", "wait", "[sim] Let time pass so the next thing on the network happens.", run_wait,
-))
-register(Command(
-    "show-arp", "show-arp <host-name>", f"{TEACHING} Show any host's ARP table.", run_show_arp,
+    "show-arp", "show-arp <host-name>", f"{TEACHING} Show a host's ARP table.", run_show_arp,
 ))
 register(Command(
     "explain", "explain", f"{TEACHING} Show the checks behind the last event.", run_explain,

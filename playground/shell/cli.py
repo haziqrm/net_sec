@@ -25,12 +25,10 @@ def build_session(defence: bool = False) -> Session:
 
 def banner(defence: bool) -> List[str]:
     """Lines shown when the shell starts."""
-    mode = "ON (victim has a static ARP entry for the gateway)" if defence else "off"
-    return [
-        "This is a simulation: no real packets are sent and your real network is never touched.",
-        f"Defence: {mode}",
-        "Type help to list commands, exit to leave.",
-    ]
+    lines = ["This is a simulation: nothing touches your real network. Type help for commands."]
+    if defence:
+        lines.append("Defence on: the victim has a locked ARP entry for the gateway.")
+    return lines
 
 
 def repl(

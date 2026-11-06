@@ -40,8 +40,8 @@ def test_help_for_one_command_shows_usage():
 
 def test_bad_arguments_return_usage_and_do_not_raise():
     s = new_session()
-    assert s.execute("exit now") == ["exit: usage: exit"]
-    assert s.execute("help a b") == ["help: usage: help [command]"]
+    assert s.execute("exit now") == ["usage: exit"]
+    assert s.execute("help a b") == ["usage: help [command]"]
 
 
 def test_unclosed_quote_does_not_raise():
@@ -68,7 +68,7 @@ def test_exit_returns_marker():
 
 def test_allowed_restricts_commands_and_help():
     s = new_session(allowed=frozenset({"ip"}))
-    assert s.execute("arpspoof -t 10.0.0.5 10.0.0.1") == ["arpspoof: not available in this level"]
+    assert s.execute("arpspoof -t 10.0.0.5 --mac aa:aa:aa:aa:aa:09 10.0.0.1") == ["arpspoof: not available in this level"]
     assert s.execute("help arp-scan") == ["arp-scan: not available in this level"]
     listed = "\n".join(s.execute("help"))
     assert "  ip " in listed and "arp-scan" not in listed

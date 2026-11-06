@@ -15,11 +15,11 @@ RunFn = Callable[["Session", List[str]], Tuple["Session", List[str]]]
 
 
 class UsageError(Exception):
-    """Raised when a command's arguments are wrong; shown as ``<name>: usage: <usage>``."""
+    """Raised when a command's arguments are wrong; shown as ``usage: <usage>``."""
 
 
 class CommandError(Exception):
-    """Raised for a specific problem; shown as ``<name>: <message>``, like a real tool."""
+    """Raised for a specific problem; its message is shown as one line."""
 
 
 @dataclass(frozen=True)

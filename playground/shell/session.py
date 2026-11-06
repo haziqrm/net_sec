@@ -58,9 +58,9 @@ class Session:
         try:
             return command.run(base, args)
         except UsageError:
-            return base, [f"{name}: usage: {command.usage}"]
+            return base, [f"usage: {command.usage}"]
         except (CommandError, ValueError) as exc:  # ValueError: the engine rejected input
-            return base, [f"{name}: {exc}"]
+            return base, [str(exc)]
 
     def execute(self, line: str) -> List[str]:
         """Run one typed line, adopt the resulting session, and return output lines."""
