@@ -106,14 +106,18 @@ def run_arpspoof(session: Session, args: List[str]) -> Output:
 
 
 def run_wait(session: Session, args: List[str]) -> Output:
-    """Let time pass: apply the next scheduled action, if any."""
+    """Let time pass: apply the next scheduled action, if any.
+
+    The schedule repeats: the action moves to the back of the queue, so the victim
+    logs in again on every wait and a student can retry after a mistake.
+    """
     if args:
         raise UsageError
     if not session.scheduled:
         return session, ["nothing happens"]
     action, rest = session.scheduled[0], session.scheduled[1:]
     new_net, events = apply(session.network, action)
-    new = replace(session, network=new_net, scheduled=rest, last_events=events)
+    new = replace(session, network=new_net, scheduled=(*rest, action), last_events=events)
     return new, [f"{SIM} {e.text}" for e in events]
 
 

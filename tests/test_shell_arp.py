@@ -59,10 +59,35 @@ def test_attack_then_wait_then_tcpdump_shows_login():
     assert s.execute("tcpdump") == [f"{VICTIM_IP} -> {GATEWAY_IP}: {LOGIN_PAYLOAD}"]
 
 
-def test_wait_runs_each_scheduled_action_once():
+def test_victim_logs_in_on_every_wait():
     s = build_session()
     assert s.execute("wait")[0].startswith("[sim] victim -> gateway")
+    assert s.execute("wait")[0].startswith("[sim] victim -> gateway")
+
+
+def test_wait_with_nothing_scheduled():
+    s = build_session()
+    s.scheduled = ()
     assert s.execute("wait") == ["nothing happens"]
+
+
+def test_student_can_retry_after_spoofing_a_wrong_mac():
+    s = build_session()
+    s.execute(f"arpspoof -t {VICTIM_IP} --mac aa:aa:aa:aa:aa:08 {GATEWAY_IP}")
+    assert s.execute("wait") == [
+        "[sim] frame from victim to aa:aa:aa:aa:aa:08 reached no host; dropped"
+    ]
+    s.execute(SPOOF)
+    assert s.execute("wait")[0].startswith("[sim] attacker intercepted")
+    assert s.execute("tcpdump") == [f"{VICTIM_IP} -> {GATEWAY_IP}: {LOGIN_PAYLOAD}"]
+
+
+def test_tcpdump_lists_every_captured_login():
+    s = build_session()
+    s.execute(SPOOF)
+    s.execute("wait")
+    s.execute("wait")
+    assert s.execute("tcpdump") == [f"{VICTIM_IP} -> {GATEWAY_IP}: {LOGIN_PAYLOAD}"] * 2
 
 
 def test_defence_rejects_spoof_and_explain_ends_with_reject():
