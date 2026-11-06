@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import shlex
 from dataclasses import dataclass, fields, replace
-from typing import List, Tuple
+from typing import FrozenSet, List, Optional, Tuple
 
 import playground.shell.commands  # noqa: F401  (registers the commands)
 from playground.engine.actions import Action
 from playground.engine.events import Event
 from playground.engine.state import Network
-from playground.shell.registry import COMMANDS, UsageError
+from playground.shell.registry import COMMANDS, CommandError, UsageError
+
+# Commands a level can never take away, so a student is never stuck.
+ALWAYS_ALLOWED = frozenset({"help", "exit"})
 
 
 @dataclass
@@ -21,7 +24,8 @@ class Session:
     return a new one built with ``dataclasses.replace``. ``step`` is pure;
     ``execute`` is the one place that adopts the new values, for the CLI loop.
     ``last_events`` holds the events from the most recent command that caused any,
-    so ``explain`` still works after an ``arp -a`` in between.
+    so ``explain`` still works after another command in between.
+    ``allowed`` limits the commands a level offers (None means all of them).
     """
 
     network: Network
@@ -29,6 +33,11 @@ class Session:
     scheduled: Tuple[Action, ...] = ()
     history: Tuple[str, ...] = ()
     last_events: Tuple[Event, ...] = ()
+    allowed: Optional[FrozenSet[str]] = None
+
+    def is_allowed(self, name: str) -> bool:
+        """True if command ``name`` may be used in this level."""
+        return self.allowed is None or name in self.allowed or name in ALWAYS_ALLOWED
 
     def step(self, line: str) -> Tuple[Session, List[str]]:
         """Run one typed line and return the new session and output, without mutating."""
@@ -44,13 +53,14 @@ class Session:
         command = COMMANDS.get(name)
         if command is None:
             return base, [f"unknown command: {name}. Type help"]
+        if not base.is_allowed(name):
+            return base, [f"{name}: not available in this level"]
         try:
             return command.run(base, args)
-        except UsageError as exc:
-            reason = [str(exc)] if str(exc) else []
-            return base, [*reason, f"usage: {command.usage}"]
-        except ValueError as exc:  # engine rejects bad input, e.g. an unknown host
-            return base, [f"error: {exc}"]
+        except UsageError:
+            return base, [f"{name}: usage: {command.usage}"]
+        except (CommandError, ValueError) as exc:  # ValueError: the engine rejected input
+            return base, [f"{name}: {exc}"]
 
     def execute(self, line: str) -> List[str]:
         """Run one typed line, adopt the resulting session, and return output lines."""

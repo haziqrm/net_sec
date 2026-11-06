@@ -15,10 +15,11 @@ RunFn = Callable[["Session", List[str]], Tuple["Session", List[str]]]
 
 
 class UsageError(Exception):
-    """Raised by a command when its arguments are wrong; the shell shows its usage.
+    """Raised when a command's arguments are wrong; shown as ``<name>: usage: <usage>``."""
 
-    An optional message (e.g. "unknown host: bob") is shown before the usage line.
-    """
+
+class CommandError(Exception):
+    """Raised for a specific problem; shown as ``<name>: <message>``, like a real tool."""
 
 
 @dataclass(frozen=True)

@@ -10,7 +10,7 @@ from playground.engine.scenarios import GATEWAY_IP, GATEWAY_MAC, simple_lan
 from playground.shell.registry import EXIT_MARKER
 from playground.shell.session import Session
 
-PROMPT = "attacker$ "
+PROMPT = "attacker# "
 LOGIN_PAYLOAD = "POST /login user=alice"
 
 
@@ -27,7 +27,7 @@ def banner(defence: bool) -> List[str]:
     """Lines shown when the shell starts."""
     mode = "ON (victim has a static ARP entry for the gateway)" if defence else "off"
     return [
-        "Simulated network: nothing here touches your real network.",
+        "This is a simulation: no real packets are sent and your real network is never touched.",
         f"Defence: {mode}",
         "Type help to list commands, exit to leave.",
     ]

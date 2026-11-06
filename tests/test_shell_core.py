@@ -5,8 +5,8 @@ from playground.shell.registry import COMMANDS, EXIT_MARKER, Command
 from playground.shell.session import Session
 
 
-def new_session():
-    return Session(simple_lan())
+def new_session(**kwargs):
+    return Session(simple_lan(), **kwargs)
 
 
 def test_empty_line_returns_nothing():
@@ -22,36 +22,30 @@ def test_unknown_command_message():
     assert s.history == ("nmap 10.0.0.1",)
 
 
+def test_hosts_command_is_gone():
+    assert "hosts" not in COMMANDS
+    assert new_session().execute("hosts") == ["unknown command: hosts. Type help"]
+
+
 def test_help_lists_every_command():
     out = "\n".join(new_session().execute("help"))
-    for name in ("help", "hosts", "exit"):
+    for name in COMMANDS:
         assert name in out
-    assert COMMANDS["hosts"].help_text in out
+    assert COMMANDS["exit"].help_text in out
 
 
 def test_help_for_one_command_shows_usage():
-    out = new_session().execute("help hosts")
-    assert out[0] == "usage: hosts"
-
-
-def test_hosts_lists_names_ips_and_macs():
-    out = new_session().execute("hosts")
-    text = "\n".join(out)
-    for host in simple_lan().hosts.values():
-        assert host.name in text and host.ip in text and host.mac in text
-    assert len(out) == 1 + len(simple_lan().hosts)
-    assert "(you)" in next(line for line in out if line.startswith("attacker"))
+    assert new_session().execute("help exit")[0] == "usage: exit"
 
 
 def test_bad_arguments_return_usage_and_do_not_raise():
     s = new_session()
-    assert s.execute("hosts extra") == ["usage: hosts"]
-    assert s.execute("help a b") == ["usage: help [command]"]
-    assert s.execute("exit now") == ["usage: exit"]
+    assert s.execute("exit now") == ["exit: usage: exit"]
+    assert s.execute("help a b") == ["help: usage: help [command]"]
 
 
 def test_unclosed_quote_does_not_raise():
-    out = new_session().execute('help "hosts')
+    out = new_session().execute('help "exit')
     assert len(out) == 1 and out[0].startswith("could not parse line")
 
 
@@ -72,9 +66,19 @@ def test_exit_returns_marker():
     assert new_session().execute("exit") == [EXIT_MARKER]
 
 
+def test_allowed_restricts_commands_and_help():
+    s = new_session(allowed=frozenset({"ip"}))
+    assert s.execute("arpspoof -t 10.0.0.5 10.0.0.1") == ["arpspoof: not available in this level"]
+    assert s.execute("help arp-scan") == ["arp-scan: not available in this level"]
+    listed = "\n".join(s.execute("help"))
+    assert "  ip " in listed and "arp-scan" not in listed
+    assert s.execute("exit") == [EXIT_MARKER]  # help and exit are always available
+    assert s.network == simple_lan()
+
+
 def test_step_does_not_mutate_session():
     s = new_session()
-    new, _ = s.step("hosts")
+    new, _ = s.step("help")
     assert s.history == ()
-    assert new.history == ("hosts",)
+    assert new.history == ("help",)
     assert new.network is s.network
